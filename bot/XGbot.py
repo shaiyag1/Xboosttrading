@@ -151,11 +151,18 @@ def main(argv):
         # selling loop
         ctime = time.strftime("%d %b %Y %H:%M:%S", time.localtime())
         print "before==> %s" % ctime
-        ticker = conn.api_query('returnTicker')
+        try:
+            ticker = conn.api_query('returnTicker')
+        except:
+            ticker=None;
+            print " conn.api_query('returnTicker') Failed" 
+
+
         print "after"
-        for key in ticker:
-            if (key.startswith("BTC")):
-                newBTCTicker[key] = float(ticker[key]['last'])
+        if(ticker!=None):
+            for key in ticker:
+                if (key.startswith("BTC")):
+                    newBTCTicker[key] = float(ticker[key]['last'])
 
         tmpOrders = {}
         tmpOrders = myOrders.copy()
