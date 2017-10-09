@@ -16,7 +16,7 @@ from xgboost import XGBClassifier
 import pickle
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
-from sklearn.metrics import confusion_matrixoff
+from sklearn.metrics import confusion_matrix
 
 import pandas as pa
 import matplotlib.pyplot as plt
@@ -117,14 +117,41 @@ def coinstat(coin,dt):
 coinstat.counter = 0
 
 
+def createfeaturesOnTop(workingset,tickerline):
+    j=8
+    workingset=np.roll(workingset,1,axis=0)
+    HistoricalDataOrderPandas = {"close":0,"date":1,"high":2,"low":3,"open":4,"quoteVolume":5,"volume":6,"weightedAverage":7}
+    workingset[0,0:j] = tickerline[0:j]
+
+    for item in ["quoteVolume","volume","weightedAverage",'close']:
+        for k in [2,5,10,20,40,70]:
+            workingset[0,j]=np.max(workingset[0:k,HistoricalDataOrderPandas[item]])
+            j=j+1
+            workingset[0,j]=np.min(workingset[0:k,HistoricalDataOrderPandas[item]])
+            j=j+1
+            workingset[0,j]=np.mean(workingset[0:k,HistoricalDataOrderPandas[item]])
+            j=j+1
+            workingset[0,j]=np.min(workingset[0:k,HistoricalDataOrderPandas[item]])-workingset[0,HistoricalDataOrderPandas[item]]
+            j=j+1
+            workingset[0,j]=workingset[0,HistoricalDataOrderPandas[item]]-workingset[k][HistoricalDataOrderPandas[item]]
+            j=j+1
+
+    numcoloms=j
+
+    return workingset,numcoloms
+
+
+
+
+
+
 def createCoinDataEX(coin,startTime,endTime,mode='online'):
         lastEma = 0
         historicalData = {}
         movingPeriod = 100
         ticker=[]
 
-        Testtradedata= pa.read_csv('./data_org2/' + coin + '.csv', sep='\t', encoding='utf-8')
-        TesttradedataMA=Testtradedata.as_matrix()
+
         if('offline' == mode):
             print('offline mode')
             tradedata= pa.read_csv('./data_org2/' + coin + '.csv', sep='\t', encoding='utf-8')
@@ -145,35 +172,51 @@ def createCoinDataEX(coin,startTime,endTime,mode='online'):
         historicalDataPA = tradedata['close'].as_matrix()
         alldataPA= tradedata.as_matrix()
         retdataset=np.copy(alldataPA[movingPeriod:alldataPA.shape[0],:])
-        retdataset =np.append(retdataset, np.zeros((retdataset.shape[0],300)),axis=1)
+        retdataset =np.append(retdataset, np.zeros((retdataset.shape[0],200)),axis=1)
         retmaxindex=0
         HistoricalDataOrderPandas = {"close":0,"date":1,"high":2,"low":3,"open":4,"quoteVolume":5,"volume":6,"weightedAverage":7}
 
         #coinstat(coin, tradedataMA[:,HistoricalDataOrderPandas['close']])
+
+        # Initialize working set
+
+        workingset= np.zeros((movingPeriod,retdataset.shape[1]))
+        for i in xrange(movingPeriod):
+            # print(type(tradedataMA))
+            # print(type(workingset))
+            # print(tradedataMA[i,1:9])
+            # print(workingset[workingsetlines-i-1,0:9])
+            workingset[movingPeriod-i-1,0:8]=tradedataMA[i,0:8]
 
 
 
         for   i in xrange (retdataset.shape[0]):
 
             ioffset=i+movingPeriod
-            j=9
+            j=8
 
-            for item in ["quoteVolume","volume","weightedAverage"]:
-                for k in [2,5,10,20,40,70]:
-                    retdataset[i,j]=np.max(tradedataMA[ioffset-k:ioffset,HistoricalDataOrderPandas[item]])
-                    j=j+1
-                    retdataset[i,j]=np.min(tradedataMA[ioffset-k:ioffset,HistoricalDataOrderPandas[item]])
-                    j=j+1
-                    retdataset[i,j]=np.mean(tradedataMA[ioffset-k:ioffset,HistoricalDataOrderPandas[item]])
-                    j=j+1
-                    retdataset[i,j]=np.min(tradedataMA[ioffset-k:ioffset,HistoricalDataOrderPandas[item]])-tradedataMA[ioffset,HistoricalDataOrderPandas[item]]
-                    j=j+1
-                    retdataset[i,j]=tradedataMA[ioffset][HistoricalDataOrderPandas[item]]-tradedataMA[i-k][HistoricalDataOrderPandas[item]]
-                    j=j+1
+            if(True):
+                workingset,retmaxindex= createfeaturesOnTop(workingset,tradedataMA[ioffset,:])
+                workingset[0,retmaxindex]=testSellOpportunityEX (ioffset,tradedataMA[:,HistoricalDataOrderPandas['close'] ]  )
+                retdataset[i,:]=workingset[0,:]
 
-            y = testSellOpportunityEX (ioffset,tradedataMA[:,HistoricalDataOrderPandas['close'] ]  )
-            retdataset[i,j]=y
-            retmaxindex=j
+            else:
+                for item in ["quoteVolume","volume","weightedAverage",'close']:
+                    for k in [2,5,10,20,40,70]:
+                        retdataset[i,j]=np.max(tradedataMA[ioffset-k:ioffset,HistoricalDataOrderPandas[item]])
+                        j=j+1
+                        retdataset[i,j]=np.min(tradedataMA[ioffset-k:ioffset,HistoricalDataOrderPandas[item]])
+                        j=j+1
+                        retdataset[i,j]=np.mean(tradedataMA[ioffset-k:ioffset,HistoricalDataOrderPandas[item]])
+                        j=j+1
+                        retdataset[i,j]=np.min(tradedataMA[ioffset-k:ioffset,HistoricalDataOrderPandas[item]])-tradedataMA[ioffset,HistoricalDataOrderPandas[item]]
+                        j=j+1
+                        retdataset[i,j]=tradedataMA[ioffset][HistoricalDataOrderPandas[item]]-tradedataMA[i-k][HistoricalDataOrderPandas[item]]
+                        j=j+1
+                y = testSellOpportunityEX (ioffset,tradedataMA[:,HistoricalDataOrderPandas['close'] ]  )
+                retdataset[i,j]=y
+                retmaxindex=j
+
 
         return retdataset,retmaxindex
 
@@ -182,11 +225,11 @@ def expandtestdatabyones(X_train, y_train):
     num_ones= np.sum(y_train)
     Y_train_1=y_train.reshape(y_train.shape[0],1)
     testdata = np.append(X_train,Y_train_1,axis=1)
-    print(X_train.shape)
-    print(testdata.shape)
+    # print(X_train.shape)
+    # print(testdata.shape)
     testdata = testdata[(-testdata[:,158]).argsort()]
     ones_testdata=testdata[0:int(num_ones-1),:]
-    print(ones_testdata.shape)
+    # print(ones_testdata.shape)
     for i in xrange(1):
         ones_testdata= np.append(ones_testdata,ones_testdata,axis=0)
     aa=(np.random.rand(ones_testdata.shape[0],ones_testdata.shape[1]) -0.5)
@@ -194,7 +237,7 @@ def expandtestdatabyones(X_train, y_train):
     ones_testdata=ones_testdata+diffmat
     ones_testdata[:,ones_testdata.shape[1]-1]=1
 
-    print(ones_testdata.shape)
+    # print(ones_testdata.shape)
     return ones_testdata
 
 
@@ -243,8 +286,8 @@ def createModelEX(coin,datasetMA,naxcolom):
 
     # split data into X and y
     print("Shai ----------")
-    print(datasetMA.shape)
-    print(np.max( datasetMA[:,naxcolom]))
+    # print(datasetMA.shape)
+    # print(np.max( datasetMA[:,naxcolom]))
     X = datasetMA[:, 0:naxcolom-1]
     Y = datasetMA[:, naxcolom]   # split data into train and test sets
     seed = 7
@@ -271,7 +314,7 @@ def createModelEX(coin,datasetMA,naxcolom):
     accuracy = accuracy_score(y_test, predictions)
     cm = confusion_matrix(y_test, y_pred)
     print cm
-    print(model.feature_importances_)
+    #print(model.feature_importances_)
     # save model
     pickle.dump(model, open("./model/"+coin+".dat", "wb"))
 
@@ -283,7 +326,7 @@ def main(argv):
     coins2 = ['BTC_ETC','BTC_ETH','BTC_EXP','BTC_FCT','BTC_FLDC','BTC_FLO','BTC_GAME','BTC_GNO', 'BTC_GNT','BTC_GRC','BTC_HUC','BTC_LBC','BTC_LSK','BTC_LTC','BTC_MAID','BTC_NAUT','BTC_NAV','BTC_NEOS','BTC_NMC','BTC_NOTE','BTC_NXC']
     coins3 =['BTC_NXT','BTC_PASC','BTC_PINK','BTC_POT','BTC_PPC','BTC_RADS','BTC_REP','BTC_RIC','BTC_SBD','BTC_SC','BTC_SJCX','BTC_STEEM','BTC_STRAT','BTC_STR','BTC_SYS','BTC_VIA','BTC_VRC','BTC_VTC','BTC_XBC','BTC_XCP','BTC_XEM','BTC_XMR']
 
-    coins = coins1+coins2+ coins3#['BTC_BCN']
+    coins = coins1_partial #coins1+coins2+ coins3#['BTC_BCN']
 
     for coin in coins:
         start = timeit.default_timer()
