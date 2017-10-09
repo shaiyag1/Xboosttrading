@@ -5,17 +5,34 @@ import datetime
 import ast
 import os.path
 import calendar
+#import winsound
 import xlsxwriter
 import numpy as np
 from collections import defaultdict
 from poloniex import poloniex
 import pickle
+from multiprocessing import Process,Pipe
+
+sys.path.insert(0, '..')
+
+from createfeaturesOnTop import createfeaturesOnTop
 
 def getCandle(conn,coin,interval):
     return conn.api_query("returnChartData",
                           {"currencyPair": coin, "start": time.time() - interval,
                            "end": time.time(),"period": 300})
+def getCandleP(child_conn,coin,interval):
+    l=[]
+    conn = poloniex('', '')
+    l=conn.api_query("returnChartData",
+                          {"currencyPair": coin, "start": time.time() - interval,
+                           "end": time.time(),"period": 300})
+    child_conn.send(l[0])
 
+def getTickerP (child_conn):
+    conn = poloniex('', '')
+    t=conn.api_query('returnTicker')
+    child_conn.send(t)
 
 def createFeatures (cData,movingBTCTicker, coin, movingPeriod,lastEma):
     ticker=[]
@@ -54,13 +71,14 @@ def createFeatures (cData,movingBTCTicker, coin, movingPeriod,lastEma):
 
 
 def main(argv):
-    commInterval = 30  # 30
+    features_len=158
+    commInterval = 300  # 30
     samplingInterval = 300
     smplCount = samplingInterval/commInterval-1
     movingPeriod = 100  # 20
-    stopLoss1 = 1.01
+    stopLoss1 = 1.03
     stopLoss1Trigger = {}
-    stopLoss2 = 0.90
+    stopLoss2 = 0.60
     upMark = {}
     upMarkDiff =1
     sellThresh = 0.99
@@ -78,9 +96,22 @@ def main(argv):
     fnames=[]
     lastEma={}
 
+
+
+
     conn = poloniex('', '')
 
     fnames = os.listdir("./model")
+    dataDictionaryMapping = {"close":0,"date":1,"high":2,"low":3,"open":4,"quoteVolume":5,"volume":6,"weightedAverage":7}
+    listitems=["close","date","high","low","open","quoteVolume","volume","weightedAverage"]
+
+    workingsets={}
+    workingline=np.zeros((1,8))
+
+    for fname in fnames:
+        tmpworkingset=np.zeros((100,200))
+        key = fname.split('.')[0]
+        workingsets.update({key:tmpworkingset})
 
     for fname in fnames:
         key = fname.split('.')[0]
@@ -93,7 +124,12 @@ def main(argv):
                             "period": 300})
 
         try:
-            for i in xrange(-1, -(movingPeriod+1), -1):
+            for i in xrange(-1, -(movingPeriod+1), -1): 
+                currLine=l[i]              
+                for itemi in xrange(len(listitems)):
+                    workingline[0,itemi]=currLine[listitems[itemi]]
+                    workingsets[key],lastcolom=createfeaturesOnTop(workingsets[key],workingline[0,:])
+
                 movingBTCTicker[i][key] = l[i]
             lastEma[key]=0
             print "finished initializing %s" % key
@@ -107,17 +143,26 @@ def main(argv):
     t.write ('Time, Token, Value, Trns, Amount, Profit, Balance\n')
 
 
+
     while (not stop):
 
         # buying loop
+
+
         if len(movingBTCTicker) == movingPeriod:
-            print "in buying loop"
+            #print "in buying loop"
             for key in movingBTCTicker[-1]:
                 # create feature list
                 row = movingBTCTicker[-1][key]
                 if float(row['volume'])==0:
-                    print 'skipping '+key
+                    #print 'skipping '+key
                     continue
+
+                currLine=row             
+                for itemi in xrange(len(listitems)):
+                    workingline[0,itemi]=currLine[listitems[itemi]]
+                    workingsets[key],lastcolom=createfeaturesOnTop(workingsets[key],workingline[0,:])
+
 
                 cData = [[]]
                 cData[0].append(float("{0:.12f}".format(row['volume'])))
@@ -130,7 +175,8 @@ def main(argv):
                 lastEma[key] = createFeatures(cData[0], movingBTCTicker, key, movingPeriod, lastEma[key])
                 # activate model
                 x_temp=np.array(cData)
-                y_pred = model[key].predict(x_temp[0:1,0:158])
+                #y_pred = model[key].predict(x_temp[0:1,0:features_len])
+                y_pred=model[key].predict(workingsets[key][0:1,0:lastcolom-1])
                 # check prediction
                 buyTrigger = False
                 if y_pred[0] == 1:
@@ -150,24 +196,30 @@ def main(argv):
 
         # selling loop
         ctime = time.strftime("%d %b %Y %H:%M:%S", time.localtime())
-        print "before==> %s" % ctime
-        try:
-            ticker = conn.api_query('returnTicker')
-        except:
-            ticker=None;
-            print " conn.api_query('returnTicker') Failed" 
+        #print "before==> %s" % ctime
+        while True:
+            parent_conn, child_conn = Pipe()
+            p = Process(target=getTickerP, args=(child_conn,))
+            p.start()
+            if parent_conn.poll(5):
+                ticker = parent_conn.recv()
+                #print "successfully read ticker"
+                break
+            else:
+                print 'Connection timeout in getTickerP - Retrying'
+                p.terminate()
+                p.join()
 
-
-        print "after"
-        if(ticker!=None):
-            for key in ticker:
-                if (key.startswith("BTC")):
-                    newBTCTicker[key] = float(ticker[key]['last'])
+        #ticker = conn.api_query('returnTicker')
+        #print "after"
+        for key in ticker:
+            if (key.startswith("BTC")):
+                newBTCTicker[key] = float(ticker[key]['last'])
 
         tmpOrders = {}
         tmpOrders = myOrders.copy()
         for key in tmpOrders:
-            print "%s at %.12f purchasded at %.12f" % (key,float(newBTCTicker[key]),float(tmpOrders[key][0]))
+            print "%s at %.12f purchasded at %.12f diff= %.2f" % (key,float(newBTCTicker[key]),float(tmpOrders[key][0]),float(newBTCTicker[key])/float(tmpOrders[key][0]))
 
             if key in upMark.keys():
                 if float(newBTCTicker[key]) > float(upMark[key]):
@@ -191,7 +243,7 @@ def main(argv):
                 if key not in stopLoss1Trigger.keys():
                     stopLoss1Trigger[key]=True
 
-            if (upMarkDiff <= sellThresh or (diff<stopLoss1 and key in stopLoss1Trigger.keys()) or diff < stopLoss2):
+            if (((upMarkDiff <= sellThresh or diff<stopLoss1) and key in stopLoss1Trigger.keys()) or diff < stopLoss2):
                 if key in stopLoss1Trigger.keys():
                     del stopLoss1Trigger[key]
                 if key in upMark.keys():
@@ -218,7 +270,20 @@ def main(argv):
             movingBTCTicker.append(movingBTCTicker[-1])
             l=[]
             for key in movingBTCTicker[-1]:
-                movingBTCTicker[-1][key] = getCandle(conn, key, samplingInterval)[0]
+                while True:
+                    parent_conn, child_conn = Pipe()
+                    p = Process(target=getCandleP, args=(child_conn,key, samplingInterval))
+                    p.start()
+                    if parent_conn.poll(5):
+                        movingBTCTicker[-1][key]= parent_conn.recv()
+                        #print "successfully read candle for %s" % key
+                        #print movingBTCTicker[-1][key]
+                        break
+                    else:
+                        print 'Connection timeout in getCandleP - Retrying'
+                        p.terminate()
+                        p.join()
+                    #movingBTCTicker[-1][key] = getCandle(conn, key, samplingInterval)[0]
 
 if __name__ == "__main__":
     main(sys.argv[1:])
