@@ -21,6 +21,8 @@ from sklearn.metrics import confusion_matrix
 import pandas as pa
 import matplotlib.pyplot as plt
 
+from createfeaturesOnTop import createfeaturesOnTop
+
 
 
 def testSellOpportunityEX (sampleIndex,historicalDataPA):
@@ -79,12 +81,6 @@ def getHist(coin,startTime,endTime):
     historicalData[coin] = conn.api_query("returnChartData",
                     {"currencyPair": coin, "start": startTime, "end": endTime, "period": 300})
 
-    ### read history from previously saved file
-    # with open('./hist/' + coin, 'r') as f:
-    #     s = f.read()
-    #     historicalData[coin] = ast.literal_eval(s)
-    #     f.close()
-
     return historicalData
 
 
@@ -99,9 +95,6 @@ def coinstat(coin,dt):
     print("Min       " ,np.min(dt))
     print("mean      " ,np.mean(dt))
     print("STD       "   ,np.std(dt))
-
-
-
     print("Start Val ",dt[0])
     print("End Val   ",dt[dt.shape[0]-1])
     print("Std Ratio: " ,np.std(dt)/np.mean(dt))
@@ -117,35 +110,7 @@ def coinstat(coin,dt):
 coinstat.counter = 0
 
 
-def createfeaturesOnTop(workingset,tickerline):
-    j=8
-    workingset=np.roll(workingset,1,axis=0)
-    HistoricalDataOrderPandas = {"close":0,"date":1,"high":2,"low":3,"open":4,"quoteVolume":5,"volume":6,"weightedAverage":7}
-    workingset[0,0:j] = tickerline[0:j]
-
-    for item in ["quoteVolume","volume","weightedAverage",'close']:
-        for k in [2,5,10,20,40,70]:
-            workingset[0,j]=np.max(workingset[0:k,HistoricalDataOrderPandas[item]])
-            j=j+1
-            workingset[0,j]=np.min(workingset[0:k,HistoricalDataOrderPandas[item]])
-            j=j+1
-            workingset[0,j]=np.mean(workingset[0:k,HistoricalDataOrderPandas[item]])
-            j=j+1
-            workingset[0,j]=np.min(workingset[0:k,HistoricalDataOrderPandas[item]])-workingset[0,HistoricalDataOrderPandas[item]]
-            j=j+1
-            workingset[0,j]=workingset[0,HistoricalDataOrderPandas[item]]-workingset[k][HistoricalDataOrderPandas[item]]
-            j=j+1
-
-    numcoloms=j
-
-    return workingset,numcoloms
-
-
-
-
-
-
-def createCoinDataEX(coin,startTime,endTime,mode='online'):
+def createCoinDataEX(coin,startTime,endTime,mode='offline'):
         lastEma = 0
         historicalData = {}
         movingPeriod = 100
@@ -282,21 +247,15 @@ def createModel(coin):
 def createModelEX(coin,datasetMA,naxcolom):
 
     # load data
-    #dataset = loadtxt('./data2/'+coin+'.csv', delimiter=",", usecols=range(0, 160))
 
     # split data into X and y
-    print("Shai ----------")
-    # print(datasetMA.shape)
-    # print(np.max( datasetMA[:,naxcolom]))
+
     X = datasetMA[:, 0:naxcolom-1]
     Y = datasetMA[:, naxcolom]   # split data into train and test sets
     seed = 7
     test_size = 0.33
     X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=test_size, random_state=seed)
     # expanded = expandtestdatabyones(X_train, y_train)
-
-    # X_train=np.append(X_train,expanded[:,0:158],axis=0)
-    # y_train=np.append(y_train,expanded[:,158],axis=0)
 
     num_ones= np.sum(y_train)
 
