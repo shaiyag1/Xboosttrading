@@ -26,12 +26,8 @@ from createfeaturesOnTop import createfeaturesOnTop
 
 
 def testSellOpportunityEX (sampleIndex,historicalDataPA):
-    upMarkDiff = 1
-    upMark = 0.0
-    stopLoss1Trigger = False
+ 
     sellThresh = 0.99
-    stopLoss1 = 1.01
-    stopLoss2 = 0.95
     ROItresh  =1.09
     futurerange=12*4
 
@@ -113,7 +109,7 @@ coinstat.counter = 0
 def createCoinDataEX(coin,startTime,endTime,mode='offline'):
         lastEma = 0
         historicalData = {}
-        movingPeriod = 100
+        movingPeriod = 200
         ticker=[]
 
 
@@ -147,10 +143,6 @@ def createCoinDataEX(coin,startTime,endTime,mode='offline'):
 
         workingset= np.zeros((movingPeriod,retdataset.shape[1]))
         for i in xrange(movingPeriod):
-            # print(type(tradedataMA))
-            # print(type(workingset))
-            # print(tradedataMA[i,1:9])
-            # print(workingset[workingsetlines-i-1,0:9])
             workingset[movingPeriod-i-1,0:8]=tradedataMA[i,0:8]
 
 
@@ -207,42 +199,6 @@ def expandtestdatabyones(X_train, y_train):
 
 
 
-def createModel(coin):
-
-    # load data
-    dataset = loadtxt('./data2/'+coin+'.csv', delimiter=",", usecols=range(0, 160))
-    # split data into X and y
-    X = dataset[:, 0:158]
-    Y = dataset[:, 159]
-    # split data into train and test sets
-    seed = 7
-    test_size = 0.33
-    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=test_size, random_state=seed)
-    # expanded = expandtestdatabyones(X_train, y_train)
-
-    # X_train=np.append(X_train,expanded[:,0:158],axis=0)
-    # y_train=np.append(y_train,expanded[:,158],axis=0)
-
-    num_ones= np.sum(y_train)
-
-    
-   # expandtestdatabyones()
-
-    # fit model on training data
-    model = XGBClassifier()
-    model.fit(X_train, y_train)
-
-    # make predictions for test data
-    y_pred = model.predict(X_test)
-    predictions = [round(value) for value in y_pred]
-    # evaluate predictions
-    accuracy = accuracy_score(y_test, predictions)
-    cm = confusion_matrix(y_test, y_pred)
-    print cm
-
-    # save model
-    pickle.dump(model, open("./model/"+coin+".dat", "wb"))
-
 
 def createModelEX(coin,datasetMA,naxcolom):
 
@@ -266,16 +222,31 @@ def createModelEX(coin,datasetMA,naxcolom):
     model = XGBClassifier()
     model.fit(X_train, y_train)
 
+
+    # make prediction to train data 
+
+    y_pred= model.predict(X_train)
+    predictions = [round(value) for value in y_pred]
+    accuracy = accuracy_score(predictions, y_train)
+    cm = confusion_matrix(y_train, y_pred)
+    print("Training set results:")
+    print cm
+
+
+
     # make predictions for test data
     y_pred = model.predict(X_test)
     predictions = [round(value) for value in y_pred]
     # evaluate predictions
     accuracy = accuracy_score(y_test, predictions)
     cm = confusion_matrix(y_test, y_pred)
+    np.set_printoptions(precision=4)
+    print("Test set results:")
     print cm
     #print(model.feature_importances_)
     # save model
     pickle.dump(model, open("./model/"+coin+".dat", "wb"))
+    return cm
 
 def main(argv):
     import timeit
@@ -285,8 +256,8 @@ def main(argv):
     coins2 = ['BTC_ETC','BTC_ETH','BTC_EXP','BTC_FCT','BTC_FLDC','BTC_FLO','BTC_GAME','BTC_GNO', 'BTC_GNT','BTC_GRC','BTC_HUC','BTC_LBC','BTC_LSK','BTC_LTC','BTC_MAID','BTC_NAUT','BTC_NAV','BTC_NEOS','BTC_NMC','BTC_NOTE','BTC_NXC']
     coins3 =['BTC_NXT','BTC_PASC','BTC_PINK','BTC_POT','BTC_PPC','BTC_RADS','BTC_REP','BTC_RIC','BTC_SBD','BTC_SC','BTC_SJCX','BTC_STEEM','BTC_STRAT','BTC_STR','BTC_SYS','BTC_VIA','BTC_VRC','BTC_VTC','BTC_XBC','BTC_XCP','BTC_XEM','BTC_XMR']
 
-    coins = coins1_partial #coins1+coins2+ coins3#['BTC_BCN']
-
+    coins = coins1 #coins1_partial #coins1+coins2+ coins3#['BTC_BCN']
+    cm =[[0,0],[0,0]]
     for coin in coins:
         start = timeit.default_timer()
         startTime = calendar.timegm(time.strptime('01/04/2017', '%d/%m/%Y'))
@@ -295,12 +266,15 @@ def main(argv):
         # create csv data file with all features and Y
         dataset,naxcolom = createCoinDataEX(coin,startTime,endTime)
         # create xgboost model and save it to a file
-        createModelEX(coin,dataset,naxcolom)
+        cm=cm+createModelEX(coin,dataset,naxcolom)
         #createModel(coin)
 
 
         elapsed = timeit.default_timer() - start
         print("Elepased Time   for ", coin,"    :",elapsed)
+    print("Sum CM")
+    print(cm)
+    print(cm/np.sum(cm))
     print("Elapsed time for all :", start_global_time-timeit.default_timer())
 
 if __name__ == "__main__":

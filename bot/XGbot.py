@@ -81,7 +81,7 @@ def main(argv):
     stopLoss2 = 0.60
     upMark = {}
     upMarkDiff =1
-    sellThresh = 0.99
+    sellThresh = 0.995
     newBTCTicker = {}
     movingBTCTicker = [{} for x in range(movingPeriod)]
     myOrders = {}
