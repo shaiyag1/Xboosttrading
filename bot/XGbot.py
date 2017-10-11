@@ -34,44 +34,8 @@ def getTickerP (child_conn):
     except:
         pass
 
-def createFeatures (cData,movingBTCTicker, coin, movingPeriod,lastEma):
-    ticker=[]
-    for i in range (0,len(movingBTCTicker)):
-        ticker.append(movingBTCTicker[i][coin]['close'])
-    b = np.array(ticker)
-    cData.append(max(b[:-1]))
-    cData.append(max(b[:-2]))
-    cData.append(max(b[-50:-1]))
-    cData.append(max(b[-50:-2]))
-    cData.append(max(b[-75:-1]))
-    cData.append(max(b[-75:-2]))
-
-    for i in range(0,-60, -5):
-        rolling_mean = float("{0:.12f}".format(np.mean(b[i:])))
-        cData.append(rolling_mean)
-        rolling_std = float("{0:.12f}".format(np.std(b[i:], ddof=0)))
-        cData.append(rolling_std)
-        for j in 0.382,1,2,3,4:
-            cData.append(float("{0:.12f}".format(rolling_mean + (rolling_std * j))))
-            cData.append(float("{0:.12f}".format(rolling_mean - (rolling_std * j))))
-
-    #EMA
-    if lastEma == 0:
-        ema= float("{0:.12f}".format(np.mean(b)))
-        cData.append(ema)
-        cData.append(ema)
-        cData.append(ema)
-    else:
-        cData.append(float(ticker[-1]) * 2 / (5 + 1) + lastEma * (1 - 2 / (5 + 1)))
-        cData.append(float(ticker[-1]) * 2 / (10 + 1) + lastEma * (1 - 2 / (10 + 1)))
-        ema = (float(ticker[-1]) * 2 / (20 + 1) + lastEma * (1 - 2 / (20 + 1)))
-        cData.append(ema)
-
-    return ema
-
 
 def main(argv):
-    features_len=158
     commInterval = 30  # 30
     samplingInterval = 300
     smplCount = samplingInterval/commInterval-1
@@ -97,7 +61,6 @@ def main(argv):
     i = 0
     model={}
     fnames=[]
-    lastEma={}
     prtCount=0
 
 
@@ -106,6 +69,7 @@ def main(argv):
     conn = poloniex('', '')
 
     fnames = os.listdir("./model")
+    fnames = [t for t in fnames if t.find("csv")>2]
     dataDictionaryMapping = {"close":0,"date":1,"high":2,"low":3,"open":4,"quoteVolume":5,"volume":6,"weightedAverage":7}
     listitems=["close","date","high","low","open","quoteVolume","volume","weightedAverage"]
 
@@ -135,8 +99,7 @@ def main(argv):
                     workingsets[key],lastcolom=createfeaturesOnTop(workingsets[key],workingline[0,:])
 
                 movingBTCTicker[i][key] = l[i]
-            lastEma[key]=0
-            print "finished initializing %s" % key
+            print "%-12s Initialization " % key
         except:
             print "failed to initialize %s len is %f" % (key,len(l))
             return 0
@@ -169,20 +132,8 @@ def main(argv):
                     workingline[0,itemi]=currLine[listitems[itemi]]
                     workingsets[key],lastcolom=createfeaturesOnTop(workingsets[key],workingline[0,:])
 
-
-                cData = [[]]
-                cData[0].append(float("{0:.12f}".format(row['volume'])))
-                cData[0].append(float("{0:.12f}".format(row['open'])))
-                cData[0].append(float("{0:.12f}".format(row['close'])))
-                cData[0].append(float("{0:.12f}".format(row['high'])))
-                cData[0].append(float("{0:.12f}".format(row['low'])))
-                cData[0].append(float("{0:.12f}".format(row['weightedAverage'])))
-
-                lastEma[key] = createFeatures(cData[0], movingBTCTicker, key, movingPeriod, lastEma[key])
-                # activate model
-                x_temp=np.array(cData)
-                #y_pred = model[key].predict(x_temp[0:1,0:features_len])
                 y_pred=model[key].predict(workingsets[key][0:1,0:lastcolom-1])
+
                 # check prediction
                 buyTrigger = False
                 if y_pred[0] == 1:
@@ -196,10 +147,10 @@ def main(argv):
                     balance -= bid
                     myOrders[key] = [movingBTCTicker[-1][key]['close'], orderNumber, 0]
                     ctime=time.strftime("%d %b %Y %H:%M:%S", time.localtime())
-                    print "==> %s buying %s at %.8f" % (ctime, key, float(movingBTCTicker[-1][key]['close']))
+                    print "==> %s buying %-10s at %.8f" % (ctime, key, float(movingBTCTicker[-1][key]['close']))
                     #Time, Token, Value, Trns, Amount, Balance
                     t = open('./data/transactions.csv', 'a')
-                    t.write("%s,%s,%.8f,Buy,%f,,%f\n" % (ctime, key, float(movingBTCTicker[-1][key]['close']),-bid,balance))
+                    t.write("%s,%-12s,%10.8f,Buy,%10f,,%10f\n" % (ctime, key, float(movingBTCTicker[-1][key]['close']),-bid,balance))
                     t.close()
 
         # selling loop
@@ -253,7 +204,7 @@ def main(argv):
                     stopLoss1Trigger[key]=True
             
             maxValue = float(upMark[key])
-            print "%s currently at %.12f purchasded at %.12f diff= %.2f current max value=%.12f" % (key,float(newBTCTicker[key]),float(tmpOrders[key][0]),float(newBTCTicker[key])/float(tmpOrders[key][0]),maxValue)
+            print "%-10s currently at %.12f purchasded at %.12f diff= %.2f current max value=%.12f" % (key,float(newBTCTicker[key]),float(tmpOrders[key][0]),float(newBTCTicker[key])/float(tmpOrders[key][0]),maxValue)
 
             if (((upMarkDiff <= sellThresh or diff<stopLoss1) and key in stopLoss1Trigger.keys()) or diff < stopLoss2):
                 if key in stopLoss1Trigger.keys():
@@ -267,10 +218,10 @@ def main(argv):
                 totalSales += bid * diff
 
                 ctime = time.strftime("%d %b %Y %H:%M:%S", time.localtime())
-                print "<== %s selling %s at %s with ROI of %s wallet: %s balance: %s" % (ctime, key, newBTCTicker[key], diff, wallet,balance)
+                print "<== %s selling %-12s at %s with ROI of %s wallet: %s balance: %s" % (ctime, key, newBTCTicker[key], diff, wallet,balance)
                 # Time, Token, Value, Trns, Amount, Balance
                 t = open('./data/transactions.csv', 'a')
-                t.write("%s,%s,%.12f,Sell,%f,%f,%f,%.12f\n" % (ctime, key, float(newBTCTicker[key]), bid*diff, diff, balance,maxValue))
+                t.write("%20s, %-10s, %.12f,Sell ,%10f,%-14f,  %-14f,  %.12f  \n" % (ctime, key, float(newBTCTicker[key]), bid*diff, diff, balance, maxValue/(float(newBTCTicker[key])/diff)))
                 t.close()
                 del myOrders[key]
 
