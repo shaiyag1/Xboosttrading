@@ -25,8 +25,11 @@ import configparser
 from createfeaturesOnTop import createfeaturesOnTop
 
 
+g_sellThresh = 1
+g_ROItresh=1
+g_futurerange=12*5
 
-def testBuyOpprtunity (sampleIndex,historicalDataPA):
+def testBuyOpprtunity (sampleIndex,historicalDataPA,sellThreshq ,ROItreshq  ,futurerange1):
  
     sellThresh = 0.99
     ROItresh  =1.07
@@ -110,22 +113,26 @@ def getHist(coin,startTime,endTime):
 
 
 
-def coinstat(coin,dt):
-    coinstat.counter=coinstat.counter+1
+def coinstat(coin,dtall):
+    HistoricalDataOrderPandas = {"close":0,"date":1,"high":2,"low":3,"open":4,"quoteVolume":5,"volume":6,"weightedAverage":7}
 
-    print("Coin Stat "+coin)
-    print(dt[588:600])
-    print("Max       " ,np.max(dt))
-    print("Min       " ,np.min(dt))
-    print("mean      " ,np.mean(dt))
-    print("STD       "   ,np.std(dt))
-    print("Start Val ",dt[0])
-    print("End Val   ",dt[dt.shape[0]-1])
-    print("Std Ratio: " ,np.std(dt)/np.mean(dt))
-    dt_1=np.roll(dt,1)
-    diffarr=dt_1-dt
-    print("Average diff: " ,np.mean(diffarr))
-    print("Diff Close ratio" ,abs(np.mean(diffarr)/np.mean(dt)))
+    for item in ["close","quoteVolume"]:
+        dt=dtall[:,HistoricalDataOrderPandas[item]]
+        coinstat.counter=coinstat.counter+1
+
+        print("Coin Stat "+coin)
+        print(dt[588:600])
+        print("Max       " ,np.max(dt))
+        print("Min       " ,np.min(dt))
+        print("mean      " ,np.mean(dt))
+        print("STD       "   ,np.std(dt))
+        print("Start Val ",dt[0])
+        print("End Val   ",dt[dt.shape[0]-1])
+        print("Std Ratio: " ,np.std(dt)/np.mean(dt))
+        dt_1=np.roll(dt,1)
+        diffarr=dt_1-dt
+        print("Average diff: " ,np.mean(diffarr))
+        print("Diff Close ratio" ,abs(np.mean(diffarr)/np.mean(dt)))
     # plt.figure(coinstat.counter )
     # plt.plot(dt)
     # plt.ylabel(coin)
@@ -166,7 +173,7 @@ def createCoinDataEX(coin,startTime,endTime,mode='offline',buysellmode="Buy"):
         retmaxindex=0
         HistoricalDataOrderPandas = {"close":0,"date":1,"high":2,"low":3,"open":4,"quoteVolume":5,"volume":6,"weightedAverage":7}
 
-        #coinstat(coin, tradedataMA[:,HistoricalDataOrderPandas['close']])
+        #coinstat(coin, tradedataMA)
 
         # Initialize working set
 
@@ -180,7 +187,8 @@ def createCoinDataEX(coin,startTime,endTime,mode='offline',buysellmode="Buy"):
             ioffset=i+movingPeriod
             workingset,retmaxindex= createfeaturesOnTop(workingset,tradedataMA[ioffset,:])
             if(buysellmode=="Buy"):
-                workingset[0,retmaxindex]=testBuyOpprtunity (ioffset,tradedataMA[:,HistoricalDataOrderPandas['close'] ]  )
+                workingset[0,retmaxindex]=testBuyOpprtunity (ioffset,tradedataMA[:,HistoricalDataOrderPandas['close'] ] ,g_sellThresh ,g_ROItresh,g_futurerange)
+
             if(buysellmode=="Sell"):
                 workingset[0,retmaxindex]=testSellOpprtunity (ioffset,tradedataMA[:,HistoricalDataOrderPandas['close'] ]  )
             retdataset[i,:]=workingset[0,:]
@@ -261,7 +269,7 @@ def createModelEX(coin,datasetMA,naxcolom,buysellmode="Buy"):
     
     print("Test set results:")
     print cmtest
-    # print(model.feature_importances_)
+    print(model.feature_importances_)
     # save model
     pickle.dump(model, open("./model/"+coin+".dat", "wb"))
     return cmtest,cmtrain
@@ -272,6 +280,16 @@ def main(argv):
     config = configparser.ConfigParser()
     config.read('config.ini')
 
+
+    global g_sellThresh
+    g_sellThresh = float(config['modelparams']['sellthresh'])
+    global g_ROItresh
+    g_ROItresh=config['modelparams']['ROItresh']
+    global g_futurerange
+    g_futurerange ==config['modelparams']['futurerange']
+
+    A=float(config['modelparams']['sellthresh'])
+    print(A+1)
     for key in config['modelparams']: 
         print(key)
     if(str(config['modelparams']['onlinemode']) =='yes'):
@@ -290,13 +308,15 @@ def main(argv):
     coins2 = ['BTC_ETC','BTC_ETH','BTC_EXP','BTC_FCT','BTC_FLDC','BTC_FLO','BTC_GAME','BTC_GNO', 'BTC_GNT','BTC_GRC','BTC_HUC','BTC_LBC','BTC_LSK','BTC_LTC','BTC_MAID','BTC_NAUT','BTC_NAV','BTC_NEOS','BTC_NMC','BTC_NOTE','BTC_NXC']
     coins3 =['BTC_NXT','BTC_PASC','BTC_PINK','BTC_POT','BTC_PPC','BTC_RADS','BTC_REP','BTC_RIC','BTC_SBD','BTC_SC','BTC_SJCX','BTC_STEEM','BTC_STRAT','BTC_STR','BTC_SYS','BTC_VIA','BTC_VRC','BTC_VTC','BTC_XBC','BTC_XCP','BTC_XEM','BTC_XMR']
 
-    coins = coins1+coins2+ coins3 #'BTC_BCN'] #coins1 #coins1_partial #coins1+coins2+ coins3#['BTC_BCN']
+    coins = coins1+coins2+ coins3#+coins1 #coins3 #coins1 #coins1_partial #coins1+coins2+ coins3#['BTC_BCN']
     cmtrain =[[0,0],[0,0]]
     cmtest =[[0,0],[0,0]]
     for coin in coins:
         start = timeit.default_timer()
-        startTime = calendar.timegm(time.strptime('01/03/2017', '%d/%m/%Y'))
-        endTime = calendar.timegm(time.strptime('30/07/2017', '%d/%m/%Y'))
+        startTime = calendar.timegm(time.strptime('01/05/2017', '%d/%m/%Y'))
+        endTime = calendar.timegm(time.strptime('30/09/2017', '%d/%m/%Y'))
+
+
 
         # create csv data file with all features and Y
         dataset,naxcolom = createCoinDataEX(coin,startTime,endTime,mode=onlinemode,buysellmode=modeltype)
