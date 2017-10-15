@@ -1,11 +1,12 @@
 from __future__ import division
-import time
+import time,datetime
 import sys
 import os.path
 import numpy as np
 from poloniex import poloniex
 import pickle
 from multiprocessing import Process,Pipe
+import configparser
 
 sys.path.insert(0, '..')
 
@@ -36,10 +37,10 @@ def getTickerP (child_conn):
 
 
 def main(argv):
-    commInterval = 30  # 30
+    commInterval = 300  # 30
     samplingInterval = 300
     smplCount = samplingInterval/commInterval-1
-    movingPeriod = 100  # 20
+    movingPeriod = 210  # 20
     stopLoss1 = 1.03
     stopLoss1Trigger = {}
     stopLoss2 = 0.60
@@ -63,13 +64,17 @@ def main(argv):
     fnames=[]
     prtCount=0
 
-
-
+    config = configparser.ConfigParser()
+    config.read('../config.ini')
+        
+    sellThresh = float(config['modelparams']['sellThresh'])
+    ROItresh = float(config['modelparams']['ROItresh'])
+    futureRange  = float(eval(config['modelparams']['futurerange'])*300)
 
     conn = poloniex('', '')
 
     fnames = os.listdir("./model")
-    fnames = [t for t in fnames if t.find("csv")>2]
+    #fnames = [t for t in fnames if t.find("csv")>2]
     dataDictionaryMapping = {"close":0,"date":1,"high":2,"low":3,"open":4,"quoteVolume":5,"volume":6,"weightedAverage":7}
     listitems=["close","date","high","low","open","quoteVolume","volume","weightedAverage"]
 
@@ -77,12 +82,13 @@ def main(argv):
     workingline=np.zeros((1,8))
 
     for fname in fnames:
-        tmpworkingset=np.zeros((100,200))
+        tmpworkingset=np.zeros((movingPeriod,200))
         key = fname.split('.')[0]
         workingsets.update({key:tmpworkingset})
 
     for fname in fnames:
         key = fname.split('.')[0]
+        print 'loading %s' % key
         model[key] = pickle.load(open("./model/"+fname, "rb"))
 
         l=[]
@@ -93,14 +99,14 @@ def main(argv):
 
         try:
             for i in xrange(-1, -(movingPeriod+1), -1): 
-                currLine=l[i]              
+                currLine=l[i] 
                 for itemi in xrange(len(listitems)):
                     workingline[0,itemi]=currLine[listitems[itemi]]
                     workingsets[key],lastcolom=createfeaturesOnTop(workingsets[key],workingline[0,:])
-
                 movingBTCTicker[i][key] = l[i]
             print "%-12s Initialization " % key
-        except:
+        except Exception,exp:
+            print exp
             print "failed to initialize %s len is %f" % (key,len(l))
             return 0
 
@@ -111,6 +117,9 @@ def main(argv):
     prt = open ('./data/protfolio_stats.csv','w')
     prt.write ('Time, Money out, Current Protfolio Value,	Protfolio ROI,	Total Investment,	Total Sales,	Total Assets, Total ROI\n')
     prt.close()
+    logf = open('./data/log.csv', 'w')
+    logf.write('Time,Coin,Buy Value,Current Value,Diff from Buy,Max Value,Diff from Max,Elapsed Time\n')
+    logf.close()
 
 
     while (not stop):
@@ -145,7 +154,7 @@ def main(argv):
                     moneyOut -= bid
                     totalInvestment -= bid
                     balance -= bid
-                    myOrders[key] = [movingBTCTicker[-1][key]['close'], orderNumber, 0]
+                    myOrders[key] = [movingBTCTicker[-1][key]['close'], orderNumber, time.time()]
                     ctime=time.strftime("%d %b %Y %H:%M:%S", time.localtime())
                     print "==> %s buying %-10s at %.8f" % (ctime, key, float(movingBTCTicker[-1][key]['close']))
                     #Time, Token, Value, Trns, Amount, Balance
@@ -154,8 +163,7 @@ def main(argv):
                     t.close()
 
         # selling loop
-        ctime = time.strftime("%d %b %Y %H:%M:%S", time.localtime())
-        #print "before==> %s" % ctime
+
         while True:
             parent_conn, child_conn = Pipe()
             p = Process(target=getTickerP, args=(child_conn,))
@@ -169,8 +177,6 @@ def main(argv):
                 p.terminate()
                 p.join()
 
-        #ticker = conn.api_query('returnTicker')
-        #print "after"
         for key in ticker:
             if (key.startswith("BTC")):
                 newBTCTicker[key] = float(ticker[key]['last'])
@@ -179,7 +185,35 @@ def main(argv):
         tmpOrders = myOrders.copy()
         protfolioValue = 0.0
         for key in tmpOrders:
-
+            sellReason = ""
+            # sell if time for holding the coin over model period
+            coinTimeout = False
+            
+            elapsedTime = time.time()-tmpOrders[key][2]
+            if elapsedTime>futureRange:
+                print "timeout for %s" % key
+                sellReason = "coin timeout"
+                coinTimeout = True
+                
+            # sell if diff from current value is over ROItresh
+            ROItreshTrigger = False
+            if float(tmpOrders[key][0]) >0:
+                diff = float(newBTCTicker[key]) / float(tmpOrders[key][0])
+                protfolioValue += diff*bid
+            else:
+                diff = 0
+            if diff >= ROItresh:
+                print "%s reached ROIThresh" % key
+                sellReason = "reached ROIThresh"
+                ROItreshTrigger= True
+                
+            # sell if diff from current value is under sellThresh
+            sellThreshTrigger = False
+            if diff < sellThresh:
+                print "%s reached sellThresh" % key
+                sellReason = "coin under sellThresh"
+                sellThreshTrigger= True
+                
             if key in upMark.keys():
                 if float(newBTCTicker[key]) > float(upMark[key]):
                     upMark[key] = newBTCTicker[key]
@@ -192,23 +226,15 @@ def main(argv):
                     upMarkDiff =1
                 else:
                     print key+' not found'
-
-            if float(tmpOrders[key][0]) >0:
-                diff = float(newBTCTicker[key]) / float(tmpOrders[key][0])
-                protfolioValue += diff*bid
-            else:
-                diff = 0
-
-            if diff > stopLoss1:
-                if key not in stopLoss1Trigger.keys():
-                    stopLoss1Trigger[key]=True
             
             maxValue = float(upMark[key])
-            print "%-10s currently at %.12f purchasded at %.12f diff= %.2f current max value=%.12f" % (key,float(newBTCTicker[key]),float(tmpOrders[key][0]),float(newBTCTicker[key])/float(tmpOrders[key][0]),maxValue)
+            # add maxROI and elapsed time
+            #print "%-10s currently at %.12f purchasded at %.12f diff= %.2f current max value=%.12f" % (key,float(newBTCTicker[key]),float(tmpOrders[key][0]),float(newBTCTicker[key])/float(tmpOrders[key][0]),maxValue)
+            logf = open('./data/log.csv', 'a')
+            logf.write("%s,%s,%.12f,%.12f,%.2f,%.12f,%.2f,%.2f,%s\n" % (ctime, key,float(tmpOrders[key][0]),float(newBTCTicker[key]),float(newBTCTicker[key])/float(tmpOrders[key][0]),maxValue,maxValue/float(tmpOrders[key][0]),(elapsedTime/3600),sellReason))
+            logf.close()
 
-            if (((upMarkDiff <= sellThresh or diff<stopLoss1) and key in stopLoss1Trigger.keys()) or diff < stopLoss2):
-                if key in stopLoss1Trigger.keys():
-                    del stopLoss1Trigger[key]
+            if (coinTimeout or ROItreshTrigger or sellThreshTrigger):
                 if key in upMark.keys():
                     del upMark[key]
 
@@ -216,17 +242,20 @@ def main(argv):
                 moneyOut += bid
                 balance += (bid * diff)
                 totalSales += bid * diff
+                protfolioValue -= diff*bid
 
                 ctime = time.strftime("%d %b %Y %H:%M:%S", time.localtime())
                 print "<== %s selling %-12s at %s with ROI of %s wallet: %s balance: %s" % (ctime, key, newBTCTicker[key], diff, wallet,balance)
                 # Time, Token, Value, Trns, Amount, Balance
                 t = open('./data/transactions.csv', 'a')
-                t.write("%20s, %-10s, %.12f,Sell ,%10f,%-14f,  %-14f,  %.12f  \n" % (ctime, key, float(newBTCTicker[key]), bid*diff, diff, balance, maxValue/(float(newBTCTicker[key])/diff)))
+                t.write("%20s, %-10s, %.12f,Sell ,%10f,%-14f,  %-14f,  %.12f, %s  \n" % (ctime, key, float(newBTCTicker[key]), bid*diff, diff, balance, maxValue/(float(newBTCTicker[key])/diff),sellReason))
                 t.close()
                 del myOrders[key]
 
 
         time.sleep(int(commInterval))
+        ctime = time.strftime("%d %b %Y %H:%M:%S", time.localtime())
+        print "%s protfolio ROI:%.2f total ROI:%.2f" % (ctime,protfolioValue/-moneyOut,(totalSales+protfolioValue)/-totalInvestment)
         
         prtCount += 1
         if prtCount*commInterval >= 3600:
